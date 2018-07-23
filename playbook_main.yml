@@ -1,0 +1,103 @@
+---
+- hosts: all
+  become: yes
+  vars:
+    NODE_VERSION: "9"
+    domain: "www.example.com www.example.com"
+  tasks:
+    - name: clone application repository from github
+      git: 
+        repo: "https://github.com/Davitron/EventsManagerApp.git"
+        dest: "/home/ubuntu/EventsManagerApp"
+        clone: yes
+        version: aws-deploy
+    - name: Retrieve gpg key for node package
+      apt_key:
+        url: "https://deb.nodesource.com/gpgkey/nodesource.gpg.key"
+        state: present
+
+    - name: Add nodejs version 9.11.X PPA repository
+      apt_repository:
+        repo: "deb https://deb.nodesource.com/node_{{ NODE_VERSION }}.x {{ ansible_distribution_release }} main"
+        state: present
+        update_cache: yes
+
+    - name: Install nodejs
+      apt: 
+        name: nodejs
+        state: present
+
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: latest
+
+    - name: Start nginx
+      service:
+        name: nginx
+        state: started
+
+    - name: Remove default NGINX configuration
+      file: 
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Setup reverse proxy
+      shell:
+        cmd: |
+          cat > /etc/nginx/sites-available/eventManager <<EOF
+          server {
+            listen 80;
+            server_name {{ domain }};
+            location / {
+              proxy_pass 'http://127.0.0.1:8000';
+            }
+          }
+          EOF
+
+    - name: Link configurations
+      file:
+        src: /etc/nginx/sites-available/eventManager
+        dest: /etc/nginx/sites-enabled/eventManager
+        state: link
+      notify:
+      - restart nginx
+
+    - name: Set environment variables
+      shell:
+        cmd: |
+          cat > /home/ubuntu/EventsManagerApp/.env <<EOF
+          DATABASE_URL=<POSTGRESQL DATABASE URL>
+          SECRET_KEY=<JWT SECRET>
+          EMAIL_ADDRESS=<MAILING SERVICE EMAIL ADDRESS>
+          EMAIL_PASSWORD=<MAILING SERVICE PASSWORD>
+          EOF
+    - name: Install app dependecies, build application and run migration
+      shell:
+        cmd: |
+          export NODE_ENV=production
+          npm install -g sequelize-cli
+          npm install -g pm2
+          npm install --unsafe-perm
+          export $(cat .env)
+          npm run db:migration
+          pm2 start npm -- start
+          pm2 startup
+          env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
+      args:
+        chdir: /home/ubuntu/EventsManagerApp
+      
+  handlers:
+    - name: Restart nginx
+      service:
+        name: nginx
+        state: restarted
+
+
+    
+    
+      
+    
+
+
+    
